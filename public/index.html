@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>R-Render Dashboard</title>
+    <!-- Zero-build Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        renderDark: '#0e1015',
+                        renderCard: '#171923',
+                        renderBorder: '#2d3748'
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-renderDark text-gray-200 font-sans min-h-screen">
+    
+    <!-- Navbar -->
+    <nav class="border-b border-renderBorder bg-renderCard px-6 py-4 flex justify-between items-center">
+        <div class="flex items-center space-x-3">
+            <div class="w-8 h-8 bg-blue-600 rounded flex items-center justify-center font-bold text-white shadow-lg">R</div>
+            <span class="text-xl font-semibold tracking-wide text-white">R-Render</span>
+        </div>
+        <button id="newProjectBtn" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded shadow transition font-medium text-sm">
+            New Web Service
+        </button>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="max-w-6xl mx-auto mt-10 px-6">
+        <div class="mb-6">
+            <h1 class="text-2xl font-bold text-white">Dashboard</h1>
+        </div>
+        
+        <!-- Projects Table -->
+        <div class="bg-renderCard border border-renderBorder rounded-lg overflow-hidden shadow-xl">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="border-b border-renderBorder text-gray-400 text-sm">
+                        <th class="p-4 font-medium w-1/3">Service Name</th>
+                        <th class="p-4 font-medium">Status</th>
+                        <th class="p-4 font-medium">Port</th>
+                        <th class="p-4 font-medium text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="projects-list">
+                    <!-- JavaScript will inject rows here -->
+                    <tr>
+                        <td colspan="4" class="p-8 text-center text-gray-500 animate-pulse">Loading services...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>
