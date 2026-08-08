@@ -4,14 +4,12 @@ const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 const { spawn, exec } = require('child_process');
 
-// Track running processes in memory so we can kill them later
 const runningProcesses = new Map();
+const projectLogs = new Map(); // Stores live terminal output: { id: ["log 1", "log 2"] }
 
-// 1. Initialize SQLite Database
 const dbPath = path.join(__dirname, 'database.sqlite');
 const db = new sqlite3.Database(dbPath);
 
-// Create the projects table and ensure clean boot states
 db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS projects (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,14 +19,11 @@ db.serialize(() => {
         port INTEGER,
         status TEXT DEFAULT 'stopped'
     )`);
-    
-    // Safety check: If the core restarts, reset all apps to stopped
     db.run(`UPDATE projects SET status = 'stopped'`);
 });
 
 const PORT = 3000;
 
-// Helper function to read native HTTP POST bodies
 const getBody = (req) => {
     return new Promise((resolve, reject) => {
         let body = '';
@@ -40,10 +35,7 @@ const getBody = (req) => {
     });
 };
 
-// 2. Create the ultra-lightweight HTTP Server
 const server = http.createServer(async (req, res) => {
-    
-    // Parse the URL safely so we can handle dynamic IDs (like /start/1)
     const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
     const pathname = parsedUrl.pathname;
 
@@ -52,172 +44,157 @@ const server = http.createServer(async (req, res) => {
     // GET: Fetch all projects
     if (pathname === '/api/projects' && req.method === 'GET') {
         db.all("SELECT * FROM projects", [], (err, rows) => {
-            if (err) {
-                res.writeHead(500, { 'Content-Type': 'application/json' });
-                return res.end(JSON.stringify({ error: err.message }));
-            }
+            if (err) return res.writeHead(500).end(JSON.stringify({ error: err.message }));
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(rows));
         });
         return;
     }
 
-    // POST: Create a new project
+    // POST: Create project
     if (pathname === '/api/projects' && req.method === 'POST') {
         try {
-            const data = await getBody(req);
-            const { name, path: projectPath, start_command, port } = data;
-            
+            const { name, path: projectPath, start_command, port } = await getBody(req);
             db.run(
                 `INSERT INTO projects (name, path, start_command, port, status) VALUES (?, ?, ?, ?, 'stopped')`,
                 [name, projectPath, start_command, port],
                 function(err) {
-                    if (err) {
-                        res.writeHead(400, { 'Content-Type': 'application/json' });
-                        return res.end(JSON.stringify({ error: err.message }));
-                    }
+                    if (err) return res.writeHead(400).end(JSON.stringify({ error: err.message }));
                     res.writeHead(201, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ id: this.lastID, message: "Service created successfully" }));
+                    res.end(JSON.stringify({ id: this.lastID, message: "Created" }));
                 }
             );
         } catch (error) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: "Invalid JSON provided" }));
+            res.writeHead(400).end(JSON.stringify({ error: "Invalid JSON" }));
         }
         return;
     }
 
-    // POST: Start a hosted web service
-    const startMatch = pathname.match(/^\/api\/projects\/(\d+)\/start$/);
-    if (startMatch && req.method === 'POST') {
-        const id = parseInt(startMatch[1]);
-        
-        db.get("SELECT * FROM projects WHERE id = ?", [id], (err, project) => {
-            if (err || !project) {
-                res.writeHead(404, { 'Content-Type': 'application/json' });
-                return res.end(JSON.stringify({ error: 'Project not found' }));
+    // MATCH DYNAMIC ROUTES (e.g. /api/projects/1/something)
+    const routeMatch = pathname.match(/^\/api\/projects\/(\d+)(?:\/(start|stop|logs|command|delete|info))?$/);
+    if (routeMatch) {
+        const id = parseInt(routeMatch[1]);
+        const action = routeMatch[2] || 'info';
+
+        res.setHeader('Content-Type', 'application/json');
+
+        // GET: Single Project Info
+        if (action === 'info' && req.method === 'GET') {
+            db.get("SELECT * FROM projects WHERE id = ?", [id], (err, project) => {
+                if (err || !project) return res.writeHead(404).end(JSON.stringify({ error: 'Not found' }));
+                res.writeHead(200).end(JSON.stringify(project));
+            });
+            return;
+        }
+
+        // DELETE: Remove Project
+        if (action === 'info' && req.method === 'DELETE') {
+            const child = runningProcesses.get(id);
+            if (child && process.platform === 'win32') {
+                exec(`taskkill /pid ${child.pid} /T /F`);
             }
-
-            if (runningProcesses.has(id)) {
-                res.writeHead(400, { 'Content-Type': 'application/json' });
-                return res.end(JSON.stringify({ error: 'Service is already running' }));
-            }
-
-            // Cross-platform splitting
-            const parts = project.start_command.split(' ');
-            const cmd = parts[0];
-            const args = parts.slice(1);
-
-            // NORMALIZE WINDOWS PATHS: Convert \ to / so Node doesn't get confused
-            const safePath = project.path.replace(/\\/g, '/');
-
-            try {
-                // Boot the child process
-                const child = spawn(cmd, args, { 
-                    cwd: safePath, 
-                    shell: true 
-                });
-
-                // Catch critical spawn errors
-                child.on('error', (err) => {
-                    console.error(`[${project.name} CRITICAL ERROR] Failed to start:`, err.message);
-                });
-
-                // Stream live terminal logs
-                child.stdout.on('data', data => console.log(`[${project.name}] ${data.toString().trim()}`));
-                child.stderr.on('data', data => console.error(`[${project.name} ERROR] ${data.toString().trim()}`));
-                
-                // Listen for natural crashes
-                child.on('close', (code) => {
-                    console.log(`[${project.name}] Exited with code ${code}`);
-                    runningProcesses.delete(id);
-                    db.run(`UPDATE projects SET status = 'stopped' WHERE id = ?`, [id]);
-                });
-
-                // Lock it into memory and update database
-                runningProcesses.set(id, child);
-                db.run(`UPDATE projects SET status = 'running' WHERE id = ?`, [id], () => {
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ message: "Started successfully" }));
-                });
-            } catch (err) {
-                console.error(`[${project.name} FATAL]`, err);
-                res.writeHead(500, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: "Fatal error spawning process" }));
-            }
-        });
-        return;
-    }
-    // POST: Suspend/Stop a hosted web service
-    const stopMatch = pathname.match(/^\/api\/projects\/(\d+)\/stop$/);
-    if (stopMatch && req.method === 'POST') {
-        const id = parseInt(stopMatch[1]);
-        
-        const child = runningProcesses.get(id);
-        
-        if (child) {
-            // CRITICAL FIX: Forcefully kill the entire process tree so nothing is left behind
-            if (process.platform === 'win32') {
-                // Windows: /T kills the tree, /F forcefully terminates it
-                exec(`taskkill /pid ${child.pid} /T /F`, (err) => {
-                    if (err) console.error(`[Stop Error] Failed to taskkill PID ${child.pid}`);
-                });
-            } else {
-                // Linux/Termux fallback
-                child.kill('SIGINT');
-            }
-
             runningProcesses.delete(id);
+            projectLogs.delete(id);
             
-            db.run(`UPDATE projects SET status = 'stopped' WHERE id = ?`, [id], () => {
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ message: "Service forcefully stopped" }));
+            db.run("DELETE FROM projects WHERE id = ?", [id], () => {
+                res.writeHead(200).end(JSON.stringify({ message: "Deleted" }));
             });
-        } else {
-            // Anti-Ghosting: If the frontend thinks it's running but the backend lost it in memory,
-            // force the database back to stopped so the UI corrects itself.
-            db.run(`UPDATE projects SET status = 'stopped' WHERE id = ?`, [id], () => {
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ message: "Cleaned up ghost state" }));
-            });
+            return;
         }
-        return;
+
+        // GET: Terminal Logs
+        if (action === 'logs' && req.method === 'GET') {
+            const logs = projectLogs.get(id) || ["Waiting for process to start..."];
+            return res.writeHead(200).end(JSON.stringify({ logs }));
+        }
+
+        // POST: Send Command to Terminal
+        if (action === 'command' && req.method === 'POST') {
+            const { command } = await getBody(req);
+            const child = runningProcesses.get(id);
+            if (child && child.stdin) {
+                child.stdin.write(command + '\n');
+                
+                // Echo command to logs
+                const logs = projectLogs.get(id) || [];
+                logs.push(`> ${command}`);
+                projectLogs.set(id, logs);
+                
+                return res.writeHead(200).end(JSON.stringify({ message: "Sent" }));
+            }
+            return res.writeHead(400).end(JSON.stringify({ error: "Process not running or no stdin available" }));
+        }
+
+        // POST: Start
+        if (action === 'start' && req.method === 'POST') {
+            db.get("SELECT * FROM projects WHERE id = ?", [id], (err, project) => {
+                if (err || !project) return res.writeHead(404).end(JSON.stringify({ error: 'Not found' }));
+                if (runningProcesses.has(id)) return res.writeHead(400).end(JSON.stringify({ error: 'Running' }));
+
+                const safePath = project.path.replace(/\\/g, '/');
+                const parts = project.start_command.split(' ');
+
+                // Initialize empty logs for this session
+                projectLogs.set(id, [`--- System: Starting ${project.name} ---`]);
+                const addLog = (text) => {
+                    const logs = projectLogs.get(id) || [];
+                    logs.push(text);
+                    if (logs.length > 500) logs.shift(); // Keep last 500 lines to save RAM
+                    projectLogs.set(id, logs);
+                };
+
+                try {
+                    const child = spawn(parts[0], parts.slice(1), { cwd: safePath, shell: true });
+
+                    child.stdout.on('data', data => addLog(data.toString().trim()));
+                    child.stderr.on('data', data => addLog(`[ERR] ${data.toString().trim()}`));
+                    child.on('error', err => addLog(`[CRITICAL] ${err.message}`));
+                    
+                    child.on('close', (code) => {
+                        addLog(`--- System: Process exited with code ${code} ---`);
+                        runningProcesses.delete(id);
+                        db.run(`UPDATE projects SET status = 'stopped' WHERE id = ?`, [id]);
+                    });
+
+                    runningProcesses.set(id, child);
+                    db.run(`UPDATE projects SET status = 'running' WHERE id = ?`, [id], () => {
+                        res.writeHead(200).end(JSON.stringify({ message: "Started" }));
+                    });
+                } catch (err) {
+                    res.writeHead(500).end(JSON.stringify({ error: "Fatal spawn error" }));
+                }
+            });
+            return;
+        }
+
+        // POST: Stop
+        if (action === 'stop' && req.method === 'POST') {
+            const child = runningProcesses.get(id);
+            if (child) {
+                if (process.platform === 'win32') exec(`taskkill /pid ${child.pid} /T /F`);
+                else child.kill('SIGINT');
+                runningProcesses.delete(id);
+            }
+            db.run(`UPDATE projects SET status = 'stopped' WHERE id = ?`, [id], () => {
+                res.writeHead(200).end(JSON.stringify({ message: "Stopped" }));
+            });
+            return;
+        }
     }
 
     // --- STATIC FILE SERVER ---
-    
-    // Route traffic to our public folder (HTML, CSS, JS)
     let filePath = path.join(__dirname, 'public', pathname === '/' ? 'index.html' : pathname);
     let extname = path.extname(filePath);
-    
-    // Assign proper MIME types so the browser reads them correctly
     let contentType = 'text/html';
-    switch (extname) {
-        case '.js': contentType = 'text/javascript'; break;
-        case '.css': contentType = 'text/css'; break;
-    }
+    if (extname === '.js') contentType = 'text/javascript';
+    if (extname === '.css') contentType = 'text/css';
 
     fs.readFile(filePath, (err, content) => {
-        if (err) {
-            if (err.code === 'ENOENT') {
-                res.writeHead(404);
-                res.end('404: File Not Found');
-            } else {
-                res.writeHead(500);
-                res.end('Server Error: ' + err.code);
-            }
-        } else {
-            res.writeHead(200, { 'Content-Type': contentType });
-            res.end(content, 'utf-8');
-        }
+        if (err) res.writeHead(err.code === 'ENOENT' ? 404 : 500).end(err.code === 'ENOENT' ? '404' : 'Error');
+        else res.writeHead(200, { 'Content-Type': contentType }).end(content, 'utf-8');
     });
 });
 
-// 3. Boot up the Core
 server.listen(PORT, () => {
     console.log(`🚀 R-Render Core running on http://localhost:${PORT}`);
-    
-    // Log our actual memory usage to prove how light it is
-    const memoryUsed = Math.round(process.memoryUsage().rss / 1024 / 1024);
-    console.log(`🧠 Master Process RAM Usage: ${memoryUsed} MB`);
 });
