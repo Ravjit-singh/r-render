@@ -103,38 +103,51 @@ const server = http.createServer(async (req, res) => {
                 return res.end(JSON.stringify({ error: 'Service is already running' }));
             }
 
-            // Cross-platform splitting for Windows/Linux (e.g., 'npm' and 'start')
+            // Cross-platform splitting
             const parts = project.start_command.split(' ');
             const cmd = parts[0];
             const args = parts.slice(1);
 
-            // Boot the child process directly on your host OS
-            const child = spawn(cmd, args, { 
-                cwd: project.path, 
-                shell: true // Crucial for executing native cmd/bash commands smoothly
-            });
+            // NORMALIZE WINDOWS PATHS: Convert \ to / so Node doesn't get confused
+            const safePath = project.path.replace(/\\/g, '/');
 
-            // Stream live terminal logs straight to our core console
-            child.stdout.on('data', data => console.log(`[${project.name}] ${data.toString().trim()}`));
-            child.stderr.on('data', data => console.error(`[${project.name} ERROR] ${data.toString().trim()}`));
-            
-            // Listen for natural crashes or stops
-            child.on('close', (code) => {
-                console.log(`[${project.name}] Exited with code ${code}`);
-                runningProcesses.delete(id);
-                db.run(`UPDATE projects SET status = 'stopped' WHERE id = ?`, [id]);
-            });
+            try {
+                // Boot the child process
+                const child = spawn(cmd, args, { 
+                    cwd: safePath, 
+                    shell: true 
+                });
 
-            // Lock it into memory and update the database
-            runningProcesses.set(id, child);
-            db.run(`UPDATE projects SET status = 'running' WHERE id = ?`, [id], () => {
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ message: "Started successfully" }));
-            });
+                // Catch critical spawn errors
+                child.on('error', (err) => {
+                    console.error(`[${project.name} CRITICAL ERROR] Failed to start:`, err.message);
+                });
+
+                // Stream live terminal logs
+                child.stdout.on('data', data => console.log(`[${project.name}] ${data.toString().trim()}`));
+                child.stderr.on('data', data => console.error(`[${project.name} ERROR] ${data.toString().trim()}`));
+                
+                // Listen for natural crashes
+                child.on('close', (code) => {
+                    console.log(`[${project.name}] Exited with code ${code}`);
+                    runningProcesses.delete(id);
+                    db.run(`UPDATE projects SET status = 'stopped' WHERE id = ?`, [id]);
+                });
+
+                // Lock it into memory and update database
+                runningProcesses.set(id, child);
+                db.run(`UPDATE projects SET status = 'running' WHERE id = ?`, [id], () => {
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ message: "Started successfully" }));
+                });
+            } catch (err) {
+                console.error(`[${project.name} FATAL]`, err);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: "Fatal error spawning process" }));
+            }
         });
         return;
     }
-
     // POST: Suspend/Stop a hosted web service
     const stopMatch = pathname.match(/^\/api\/projects\/(\d+)\/stop$/);
     if (stopMatch && req.method === 'POST') {
