@@ -41,7 +41,7 @@ export function renderServiceList(projects) {
                     ${project.port ? `localhost:${project.port}` : '--'}
                 </td>
                 <td class="px-6 py-4 text-right">
-                    <button class="text-xs font-medium text-gray-400 hover:text-white bg-rBorder hover:bg-gray-700 px-3 py-1.5 rounded transition">
+                    <button data-id="${project.id}" data-action="${isRunning ? 'stop' : 'start'}" class="action-btn text-xs font-medium text-gray-400 hover:text-white bg-rBorder hover:bg-gray-700 px-3 py-1.5 rounded transition">
                         ${isRunning ? 'Stop' : 'Manual Deploy'}
                     </button>
                 </td>

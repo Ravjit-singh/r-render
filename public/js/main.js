@@ -1,8 +1,8 @@
-import { fetchProjects, createProject } from './api.js';
+import { fetchProjects, createProject, startProject, stopProject } from './api.js';
 import { renderNavbar } from './components/Navbar.js';
 import { renderServiceList } from './components/ServiceList.js';
 import { renderDeployModal } from './components/DeployModal.js';
-import { fetchProjects, createProject, startProject, stopProject } from './api.js';
+
 const app = document.getElementById('app');
 
 async function loadDashboardData() {
@@ -91,10 +91,8 @@ async function init() {
             submitBtn.disabled = false;
         }
     });
-}
 
-init();
-// Handle Start/Stop Button Clicks dynamically
+    // Handle Start/Stop Button Clicks dynamically
     document.getElementById('dashboard-content').addEventListener('click', async (e) => {
         const btn = e.target.closest('.action-btn');
         if (!btn) return; // If they didn't click an action button, do nothing
@@ -124,3 +122,6 @@ init();
             btn.classList.remove('opacity-50', 'cursor-not-allowed');
         }
     });
+}
+
+init();
