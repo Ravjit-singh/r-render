@@ -53,3 +53,24 @@ export async function stopProject(id) {
         throw error;
     }
 }
+export async function getProjectInfo(id) {
+    const res = await fetch(`/api/projects/${id}`);
+    return await res.json();
+}
+
+export async function getProjectLogs(id) {
+    const res = await fetch(`/api/projects/${id}/logs`);
+    return await res.json();
+}
+
+export async function sendCommand(id, command) {
+    await fetch(`/api/projects/${id}/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command })
+    });
+}
+
+export async function deleteProject(id) {
+    await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+}

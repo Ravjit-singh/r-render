@@ -1,19 +1,15 @@
-import { fetchProjects, createProject, startProject, stopProject } from './api.js';
+import { fetchProjects, createProject, startProject, stopProject, getProjectInfo, getProjectLogs, sendCommand, deleteProject } from './api.js';
 import { renderNavbar } from './components/Navbar.js';
 import { renderServiceList } from './components/ServiceList.js';
 import { renderDeployModal } from './components/DeployModal.js';
+import { renderProjectDetails } from './components/ProjectDetails.js';
 
 const app = document.getElementById('app');
+let activeLogInterval = null; 
 
-async function loadDashboardData() {
-    const contentArea = document.getElementById('dashboard-content');
-    const projects = await fetchProjects();
-    contentArea.className = ''; 
-    contentArea.innerHTML = renderServiceList(projects);
-}
-
-async function init() {
-    // Inject base UI and the hidden Modal
+async function loadDashboard() {
+    clearInterval(activeLogInterval);
+    
     app.innerHTML = `
         ${renderNavbar()}
         <main class="max-w-[1000px] w-full mx-auto mt-10 px-6 pb-12 flex-grow">
@@ -26,102 +22,132 @@ async function init() {
         </main>
         ${renderDeployModal()}
     `;
+    
+    const contentArea = document.getElementById('dashboard-content');
+    const projects = await fetchProjects();
+    contentArea.className = ''; 
+    contentArea.innerHTML = renderServiceList(projects);
+    setupDashboardEvents();
+}
 
-    await loadDashboardData();
+async function loadProjectDetails(id) {
+    clearInterval(activeLogInterval);
+    
+    app.innerHTML = `
+        ${renderNavbar()}
+        <main id="details-content" class="max-w-[1000px] w-full mx-auto mt-10 px-6 pb-12 flex-grow">
+            <div class="h-64 bg-rElevated border border-rBorder rounded-lg w-full animate-pulse"></div>
+        </main>
+    `;
 
-    // Modal DOM Elements
-    const modal = document.getElementById('deployModal');
-    const modalContent = document.getElementById('deployModalContent');
-    const form = document.getElementById('deployForm');
-    const submitBtn = document.getElementById('submitDeployBtn');
+    const project = await getProjectInfo(id);
+    document.getElementById('details-content').innerHTML = renderProjectDetails(project);
+    
+    setupDetailsEvents(project);
+    startLogPolling(id);
+}
 
-    // Toggle Modal Functions
-    const toggleModal = (show) => {
-        if (show) {
-            modal.classList.remove('hidden');
-            modal.classList.add('flex');
-            // Slight delay to trigger Tailwind opacity transition
-            setTimeout(() => {
-                modal.classList.remove('opacity-0');
-                modalContent.classList.remove('scale-95');
-            }, 10);
-        } else {
-            modal.classList.add('opacity-0');
-            modalContent.classList.add('scale-95');
-            setTimeout(() => {
-                modal.classList.add('hidden');
-                modal.classList.remove('flex');
-            }, 200);
-        }
-    };
-
-    // Event Listeners
-    document.getElementById('newServiceBtn').addEventListener('click', () => toggleModal(true));
-    document.getElementById('closeModalBtn').addEventListener('click', () => toggleModal(false));
-    document.getElementById('cancelModalBtn').addEventListener('click', () => toggleModal(false));
-
-    // Handle Form Submission
-    form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        
-        // Provide visual feedback
-        const originalText = submitBtn.innerText;
-        submitBtn.innerText = 'Creating...';
-        submitBtn.disabled = true;
-
-        const newProject = {
-            name: document.getElementById('appName').value,
-            path: document.getElementById('appPath').value,
-            start_command: document.getElementById('appCommand').value,
-            port: document.getElementById('appPort').value
-        };
-
+function startLogPolling(id) {
+    const terminal = document.getElementById('terminal-output');
+    
+    const fetchLogs = async () => {
         try {
-            await createProject(newProject);
-            form.reset();
-            toggleModal(false);
-            
-            // Reload the dashboard to show the newly added app
-            document.getElementById('dashboard-content').innerHTML = `<div class="h-32 bg-rElevated border border-rBorder rounded-lg w-full animate-pulse"></div>`;
-            await loadDashboardData();
-        } catch (error) {
-            alert(error.message);
-        } finally {
-            submitBtn.innerText = originalText;
-            submitBtn.disabled = false;
+            const { logs } = await getProjectLogs(id);
+            terminal.innerHTML = logs.map(line => `<span>${line}</span>`).join('');
+            terminal.scrollTop = terminal.scrollHeight; // Auto-scroll to bottom
+        } catch (e) { }
+    };
+    
+    fetchLogs();
+    activeLogInterval = setInterval(fetchLogs, 1000);
+}
+
+function setupDetailsEvents(project) {
+    document.getElementById('backToDashBtn').addEventListener('click', loadDashboard);
+
+    // Terminal Input
+    const termForm = document.getElementById('terminal-form');
+    termForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const input = document.getElementById('terminal-input');
+        if (input.value.trim()) {
+            await sendCommand(project.id, input.value.trim());
+            input.value = ''; // clear input
         }
     });
 
-    // Handle Start/Stop Button Clicks dynamically
-    document.getElementById('dashboard-content').addEventListener('click', async (e) => {
-        const btn = e.target.closest('.action-btn');
-        if (!btn) return; // If they didn't click an action button, do nothing
-
-        const id = btn.getAttribute('data-id');
-        const action = btn.getAttribute('data-action');
-        
-        // Visual feedback
-        const originalText = btn.innerText;
+    // Start/Stop
+    document.getElementById('toggleProjectBtn').addEventListener('click', async (e) => {
+        const btn = e.target;
         btn.innerText = 'Working...';
         btn.disabled = true;
-        btn.classList.add('opacity-50', 'cursor-not-allowed');
+        const action = btn.getAttribute('data-action');
+        if (action === 'start') await startProject(project.id);
+        else await stopProject(project.id);
+        loadProjectDetails(project.id); // Reload view to update status
+    });
 
-        try {
-            if (action === 'start') {
-                await startProject(id);
-            } else {
-                await stopProject(id);
-            }
-            // Reload the dashboard to show the new Running/Stopped status
-            await loadDashboardData();
-        } catch (error) {
-            alert(error.message);
-            // Revert button if it fails
-            btn.innerText = originalText;
-            btn.disabled = false;
-            btn.classList.remove('opacity-50', 'cursor-not-allowed');
+    // Restart
+    document.getElementById('restartProjectBtn').addEventListener('click', async (e) => {
+        e.target.innerText = 'Restarting...';
+        await stopProject(project.id);
+        await new Promise(r => setTimeout(r, 1000)); // Brief pause
+        await startProject(project.id);
+        loadProjectDetails(project.id);
+    });
+
+    // Delete
+    document.getElementById('deleteProjectBtn').addEventListener('click', async () => {
+        if (confirm(`Are you sure you want to delete ${project.name}?`)) {
+            await deleteProject(project.id);
+            loadDashboard();
         }
     });
 }
 
-init();
+function setupDashboardEvents() {
+    const modal = document.getElementById('deployModal');
+    const toggleModal = (show) => {
+        if (show) { modal.classList.remove('hidden'); modal.classList.add('flex'); setTimeout(() => { modal.classList.remove('opacity-0'); document.getElementById('deployModalContent').classList.remove('scale-95'); }, 10); } 
+        else { modal.classList.add('opacity-0'); document.getElementById('deployModalContent').classList.add('scale-95'); setTimeout(() => { modal.classList.add('hidden'); modal.classList.remove('flex'); }, 200); }
+    };
+
+    document.getElementById('newServiceBtn').addEventListener('click', () => toggleModal(true));
+    document.getElementById('closeModalBtn').addEventListener('click', () => toggleModal(false));
+    document.getElementById('cancelModalBtn').addEventListener('click', () => toggleModal(false));
+
+    document.getElementById('deployForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await createProject({
+            name: document.getElementById('appName').value,
+            path: document.getElementById('appPath').value,
+            start_command: document.getElementById('appCommand').value,
+            port: document.getElementById('appPort').value
+        });
+        toggleModal(false);
+        loadDashboard();
+    });
+
+    // Click project row to view details
+    document.getElementById('dashboard-content').addEventListener('click', async (e) => {
+        // Quick Action Button
+        const btn = e.target.closest('.action-btn');
+        if (btn) {
+            const id = btn.getAttribute('data-id');
+            const action = btn.getAttribute('data-action');
+            btn.innerText = 'Working...';
+            if (action === 'start') await startProject(id);
+            else await stopProject(id);
+            return loadDashboard();
+        }
+        
+        // Row Click for Details
+        const row = e.target.closest('tr');
+        if (row && !e.target.closest('button')) {
+            const id = row.querySelector('.action-btn').getAttribute('data-id');
+            loadProjectDetails(id);
+        }
+    });
+}
+
+loadDashboard(); // Boot the app
