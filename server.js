@@ -6,30 +6,55 @@ const net = require('net');
 const sqlite3 = require('sqlite3').verbose();
 const { spawn, exec } = require('child_process');
 
-// Convert exec into a Promise so we can "await" git clone and npm install
-const execPromise = util.promisify(exec);
+// Add our new security imports
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 
-// Memory storage for live processes and terminal logs
+// Secret key for signing login tokens (In production, put this in a .env file)
+const JWT_SECRET = 'r-render-super-secret-key-2026'; 
+
+const execPromise = util.promisify(exec);
 const runningProcesses = new Map();
 const projectLogs = new Map();
 
-// 1. Initialize SQLite Database
 const dbPath = path.join(__dirname, 'database.sqlite');
 const db = new sqlite3.Database(dbPath);
 
+// Upgraded Multi-Tenant Database Schema
 db.serialize(() => {
+    // 1. Users Table: Handles identity, roles, and RAM limits
+    db.run(`CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE,
+        password TEXT,
+        role TEXT DEFAULT 'pending', -- Roles: 'root', 'admin', 'user', 'pending'
+        ram_limit INTEGER DEFAULT 150 -- Default 150MB cap for standard users
+    )`);
+
+    // 2. Projects Table: Now includes owner_id to isolate apps
     db.run(`CREATE TABLE IF NOT EXISTS projects (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER,
         name TEXT UNIQUE,
         path TEXT,
         start_command TEXT,
         port INTEGER,
-        status TEXT DEFAULT 'stopped'
+        status TEXT DEFAULT 'stopped',
+        FOREIGN KEY(owner_id) REFERENCES users(id)
     )`);
-    // Safety check: Reset all apps to stopped if the master core restarts
-    db.run(`UPDATE projects SET status = 'stopped'`);
-});
 
+    db.run(`UPDATE projects SET status = 'stopped'`);
+
+    // 3. Auto-Inject the Root Admin on first boot
+    db.get("SELECT * FROM users WHERE role = 'root'", async (err, row) => {
+        if (!row) {
+            // Hash the password so it isn't stored in plain text
+            const hashedPwd = await bcrypt.hash('admin123', 10);
+            db.run(`INSERT INTO users (username, password, role, ram_limit) VALUES (?, ?, 'root', 999999)`, ['root', hashedPwd]);
+            console.log(`[Security] Default Root Admin created. Username: root | Password: admin123`);
+        }
+    });
+});
 const PORT = 3000;
 
 // Utility: Read native HTTP POST bodies
@@ -44,21 +69,20 @@ const getBody = (req) => {
     });
 };
 
-// Utility: Scan network for the next available port
-function getFreePort(startingPort) {
-    return new Promise((resolve) => {
-        const server = net.createServer();
+// Utility: Authenticate JWT Token
+const authenticate = (req) => {
+    return new Promise((resolve, reject) => {
+        // We will pass the token in the headers like: "Bearer <token>"
+        const authHeader = req.headers['authorization'];
+        if (!authHeader) return reject('No token provided');
         
-        server.listen(startingPort, () => {
-            const port = server.address().port;
-            server.close(() => resolve(port)); // Port is free!
-        });
-        
-        server.on('error', () => {
-            resolve(getFreePort(startingPort + 1)); // Port taken, try next
+        const token = authHeader.split(' ')[1];
+        jwt.verify(token, JWT_SECRET, (err, decoded) => {
+            if (err) return reject('Invalid or expired token');
+            resolve(decoded); // Returns { id, username, role, ram_limit }
         });
     });
-}
+};
 
 // 2. Create the master HTTP Server
 const server = http.createServer(async (req, res) => {
@@ -77,6 +101,55 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
+    // POST: Register a new user (Defaults to 'pending')
+    if (pathname === '/api/auth/register' && req.method === 'POST') {
+        try {
+            const { username, password } = await getBody(req);
+            if (!username || !password) return res.writeHead(400).end(JSON.stringify({ error: "Missing fields" }));
+            
+            // Scramble the password cryptographically
+            const hashedPwd = await bcrypt.hash(password, 10);
+            
+            db.run(`INSERT INTO users (username, password, role) VALUES (?, ?, 'pending')`, [username, hashedPwd], function(err) {
+                if (err) return res.writeHead(400).end(JSON.stringify({ error: "Username already taken" }));
+                res.writeHead(201).end(JSON.stringify({ message: "Registration successful. Awaiting root admin approval." }));
+            });
+        } catch (error) {
+            res.writeHead(500).end(JSON.stringify({ error: "Server error" }));
+        }
+        return;
+    }
+
+    // POST: Login and generate token
+    if (pathname === '/api/auth/login' && req.method === 'POST') {
+        try {
+            const { username, password } = await getBody(req);
+            
+            db.get(`SELECT * FROM users WHERE username = ?`, [username], async (err, user) => {
+                if (err || !user) return res.writeHead(401).end(JSON.stringify({ error: "Invalid credentials" }));
+                
+                // Compare the typed password with the scrambled hash in the DB
+                const isMatch = await bcrypt.compare(password, user.password);
+                if (!isMatch) return res.writeHead(401).end(JSON.stringify({ error: "Invalid credentials" }));
+                
+                // Generate a 24-hour digital ID badge (JWT)
+                const token = jwt.sign(
+                    { id: user.id, username: user.username, role: user.role, ram_limit: user.ram_limit },
+                    JWT_SECRET,
+                    { expiresIn: '24h' }
+                );
+                
+                res.writeHead(200).end(JSON.stringify({ 
+                    message: "Login successful", 
+                    token, 
+                    user: { username: user.username, role: user.role } 
+                }));
+            });
+        } catch (error) {
+            res.writeHead(500).end(JSON.stringify({ error: "Server error" }));
+        }
+        return;
+    }
     // POST: Create local project
     if (pathname === '/api/projects' && req.method === 'POST') {
         try {

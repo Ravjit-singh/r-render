@@ -1,3 +1,33 @@
+// Utility to attach the token to requests
+function getHeaders() {
+    const token = localStorage.getItem('token');
+    return {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+    };
+}
+
+export async function loginUser(username, password) {
+    const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: getHeaders()
+        body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    return data;
+}
+
+export async function registerUser(username, password) {
+    const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: getHeaders()
+        body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    return data;
+}
 export async function fetchProjects() {
     try {
         const response = await fetch('/api/projects');
@@ -13,7 +43,7 @@ export async function createProject(projectData) {
     try {
         const response = await fetch('/api/projects', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getHeaders()
             body: JSON.stringify(projectData)
         });
         if (!response.ok) {
@@ -68,7 +98,7 @@ export async function getProjectLogs(id) {
 export async function sendCommand(id, command) {
     await fetch(`/api/projects/${id}/command`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders()
         body: JSON.stringify({ command })
     });
 }
@@ -80,7 +110,7 @@ export async function createGithubProject(projectData) {
     try {
         const response = await fetch('/api/projects/github', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getHeaders()
             body: JSON.stringify(projectData)
         });
         if (!response.ok) {
