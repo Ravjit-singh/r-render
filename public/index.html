@@ -1,16 +1,12 @@
-
 <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard | R-Render</title>
-    
-    <!-- Render's Font: Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-    
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -19,23 +15,20 @@
                 extend: {
                     fontFamily: { sans: ['Inter', 'sans-serif'] },
                     colors: {
-                        rBase: '#0a0a0a',       // Deepest black background
-                        rElevated: '#111111',   // Card background
-                        rBorder: '#262626',     // Subtle borders
-                        rAccent: '#4640DE',     // Render's distinct indigo
+                        rBase: '#0a0a0a',
+                        rElevated: '#111111',
+                        rBorder: '#262626',
+                        rAccent: '#4640DE',
                         rAccentHover: '#3b36bc'
                     }
                 }
             }
         }
     </script>
-    <link rel="stylesheet" href="/style.css">
 </head>
 <body class="bg-rBase text-gray-200 font-sans antialiased min-h-screen flex flex-col">
-    <!-- Our modular JS will inject the UI here -->
+    <!-- The JS will inject everything inside this div -->
     <div id="app" class="flex-grow flex flex-col"></div>
-
-    <!-- type="module" allows us to use import/export across our JS files -->
     <script type="module" src="/js/main.js"></script>
 </body>
 </html>

@@ -11,15 +11,28 @@ export function renderDeployModal() {
                 </div>
                 
                 <form id="deployForm" class="p-6 space-y-5">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-1.5">Name</label>
-                        <input type="text" id="appName" required placeholder="e.g. r-music-api" class="w-full bg-rBase border border-rBorder rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-rAccent focus:ring-1 focus:ring-rAccent transition">
+                    
+                    <!-- Deployment Source Toggle -->
+                    <div class="flex space-x-2 p-1 bg-rBase border border-rBorder rounded-lg">
+                        <button type="button" id="tabLocal" class="flex-1 py-1.5 text-sm font-medium rounded-md bg-rElevated text-white shadow transition">Local Folder</button>
+                        <button type="button" id="tabGithub" class="flex-1 py-1.5 text-sm font-medium rounded-md text-gray-400 hover:text-gray-200 transition">GitHub Repo</button>
                     </div>
                     
                     <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1.5">Service Name</label>
+                        <input type="text" id="appName" required placeholder="e.g. skillmax-api" class="w-full bg-rBase border border-rBorder rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-rAccent focus:ring-1 focus:ring-rAccent transition">
+                    </div>
+                    
+                    <!-- Dynamic Input Groups -->
+                    <div id="localPathGroup" class="block">
                         <label class="block text-sm font-medium text-gray-300 mb-1.5">Local Folder Path</label>
-                        <input type="text" id="appPath" required placeholder="C:\\Users\\Ravjit\\hosted_apps\\r-music" class="w-full bg-rBase border border-rBorder rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-rAccent focus:ring-1 focus:ring-rAccent transition font-mono">
-                        <p class="text-xs text-gray-500 mt-1.5">Absolute path to your Node/HTML project directory.</p>
+                        <input type="text" id="appPath" placeholder="C:\\Users\\Ravjit\\hosted_apps\\skillmax" class="w-full bg-rBase border border-rBorder rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-rAccent focus:ring-1 focus:ring-rAccent transition font-mono">
+                    </div>
+                    
+                    <div id="githubUrlGroup" class="hidden">
+                        <label class="block text-sm font-medium text-gray-300 mb-1.5">Public GitHub URL</label>
+                        <input type="url" id="appRepo" placeholder="https://github.com/Ravjit-singh/rmusic.git" class="w-full bg-rBase border border-rBorder rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-rAccent focus:ring-1 focus:ring-rAccent transition font-mono">
+                        <p class="text-xs text-gray-500 mt-1.5">R-Render will automatically clone the repo and run npm install.</p>
                     </div>
                     
                     <div class="flex space-x-4">

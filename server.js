@@ -1,9 +1,11 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const util = require('util');
 const sqlite3 = require('sqlite3').verbose();
 const { spawn, exec } = require('child_process');
-
+// Convert exec into a Promise so we can "await" git clone and npm install
+const execPromise = util.promisify(exec);
 const runningProcesses = new Map();
 const projectLogs = new Map(); // Stores live terminal output: { id: ["log 1", "log 2"] }
 
@@ -69,7 +71,54 @@ const server = http.createServer(async (req, res) => {
         }
         return;
     }
+// POST: Clone and Deploy from Public GitHub URL
+    if (pathname === '/api/projects/github' && req.method === 'POST') {
+        try {
+            const { name, repoUrl, start_command, port } = await getBody(req);
 
+            // 1. Create a master folder for cloned apps if it doesn't exist
+            const appsDir = path.join(__dirname, 'hosted_apps');
+            if (!fs.existsSync(appsDir)) fs.mkdirSync(appsDir);
+
+            // 2. Define the exact path for this specific new app
+            const targetPath = path.join(appsDir, name);
+
+            if (fs.existsSync(targetPath)) {
+                return res.writeHead(400).end(JSON.stringify({ error: 'A folder with this app name already exists locally.' }));
+            }
+
+            // 3. Clone the repository
+            console.log(`[System] Cloning ${repoUrl} into ${targetPath}...`);
+            await execPromise(`git clone ${repoUrl} "${targetPath}"`);
+
+            // 4. Run npm install (if it's a Node project)
+            console.log(`[System] Installing dependencies for ${name}...`);
+            const packageJsonPath = path.join(targetPath, 'package.json');
+            
+            if (fs.existsSync(packageJsonPath)) {
+                // Cross-platform command to enter the directory and install
+                await execPromise(`cd "${targetPath}" && npm install`);
+                console.log(`[System] npm install complete for ${name}.`);
+            } else {
+                console.log(`[System] No package.json found. Skipping npm install.`);
+            }
+
+            // 5. Save the finished project to the database
+            db.run(
+                `INSERT INTO projects (name, path, start_command, port, status) VALUES (?, ?, ?, ?, 'stopped')`,
+                [name, targetPath, start_command, port],
+                function(err) {
+                    if (err) return res.writeHead(400).end(JSON.stringify({ error: err.message }));
+                    res.writeHead(201).end(JSON.stringify({ id: this.lastID, message: "Successfully cloned and installed!" }));
+                }
+            );
+
+        } catch (error) {
+            console.error("[GitHub Deploy Error]:", error);
+            res.writeHead(500).end(JSON.stringify({ error: "Failed to clone or install. Check the URL and try again." }));
+        }
+        return;
+    }
     // MATCH DYNAMIC ROUTES (e.g. /api/projects/1/something)
     const routeMatch = pathname.match(/^\/api\/projects\/(\d+)(?:\/(start|stop|logs|command|delete|info))?$/);
     if (routeMatch) {

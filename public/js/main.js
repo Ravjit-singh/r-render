@@ -1,4 +1,4 @@
-import { fetchProjects, createProject, startProject, stopProject, getProjectInfo, getProjectLogs, sendCommand, deleteProject } from './api.js';
+import { fetchProjects, createProject, startProject, stopProject, getProjectInfo, getProjectLogs, sendCommand, deleteProject, createGithubProject } from './api.js';
 import { renderNavbar } from './components/Navbar.js';
 import { renderServiceList } from './components/ServiceList.js';
 import { renderDeployModal } from './components/DeployModal.js';
@@ -116,21 +116,76 @@ function setupDashboardEvents() {
     document.getElementById('closeModalBtn').addEventListener('click', () => toggleModal(false));
     document.getElementById('cancelModalBtn').addEventListener('click', () => toggleModal(false));
 
+    // Tab Logic
+    let activeTab = 'local';
+    const tabLocal = document.getElementById('tabLocal');
+    const tabGithub = document.getElementById('tabGithub');
+    const groupLocal = document.getElementById('localPathGroup');
+    const groupGithub = document.getElementById('githubUrlGroup');
+
+    tabLocal.addEventListener('click', () => {
+        activeTab = 'local';
+        tabLocal.className = 'flex-1 py-1.5 text-sm font-medium rounded-md bg-rElevated text-white shadow transition';
+        tabGithub.className = 'flex-1 py-1.5 text-sm font-medium rounded-md text-gray-400 hover:text-gray-200 transition';
+        groupLocal.classList.remove('hidden');
+        groupGithub.classList.add('hidden');
+    });
+
+    tabGithub.addEventListener('click', () => {
+        activeTab = 'github';
+        tabGithub.className = 'flex-1 py-1.5 text-sm font-medium rounded-md bg-rElevated text-white shadow transition';
+        tabLocal.className = 'flex-1 py-1.5 text-sm font-medium rounded-md text-gray-400 hover:text-gray-200 transition';
+        groupGithub.classList.remove('hidden');
+        groupLocal.classList.add('hidden');
+    });
+
+    // Form Submission
+    const submitBtn = document.getElementById('submitDeployBtn');
     document.getElementById('deployForm').addEventListener('submit', async (e) => {
         e.preventDefault();
-        await createProject({
-            name: document.getElementById('appName').value,
-            path: document.getElementById('appPath').value,
-            start_command: document.getElementById('appCommand').value,
-            port: document.getElementById('appPort').value
-        });
-        toggleModal(false);
-        loadDashboard();
+        
+        const originalText = submitBtn.innerText;
+        submitBtn.disabled = true;
+        
+        try {
+            if (activeTab === 'local') {
+                const pathVal = document.getElementById('appPath').value;
+                if (!pathVal) return alert('Please enter a local path.');
+                
+                submitBtn.innerText = 'Creating...';
+                await createProject({
+                    name: document.getElementById('appName').value,
+                    path: pathVal,
+                    start_command: document.getElementById('appCommand').value,
+                    port: document.getElementById('appPort').value
+                });
+            } else {
+                const repoVal = document.getElementById('appRepo').value;
+                if (!repoVal) return alert('Please enter a GitHub URL.');
+                
+                // Keep the user informed since cloning takes time
+                submitBtn.innerText = 'Cloning & Installing...';
+                await createGithubProject({
+                    name: document.getElementById('appName').value,
+                    repoUrl: repoVal,
+                    start_command: document.getElementById('appCommand').value,
+                    port: document.getElementById('appPort').value
+                });
+            }
+            
+            toggleModal(false);
+            document.getElementById('deployForm').reset();
+            loadDashboard();
+        } catch (error) {
+            alert(error.message);
+        } finally {
+            submitBtn.innerText = originalText;
+            submitBtn.disabled = false;
+        }
     });
 
     // Click project row to view details
     document.getElementById('dashboard-content').addEventListener('click', async (e) => {
-        // Quick Action Button
         const btn = e.target.closest('.action-btn');
         if (btn) {
             const id = btn.getAttribute('data-id');
@@ -140,8 +195,6 @@ function setupDashboardEvents() {
             else await stopProject(id);
             return loadDashboard();
         }
-        
-        // Row Click for Details
         const row = e.target.closest('tr');
         if (row && !e.target.closest('button')) {
             const id = row.querySelector('.action-btn').getAttribute('data-id');
