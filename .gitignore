@@ -1,2 +1,4 @@
 node_modules/
 database.sqlite
+hosted_apps/*
+!hosted_apps/.gitkeep
