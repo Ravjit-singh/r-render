@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
-const { spawn } = require('child_process'); // The engine that runs your apps
+const { spawn, exec } = require('child_process');
 
 // Track running processes in memory so we can kill them later
 const runningProcesses = new Map();
@@ -154,17 +154,32 @@ const server = http.createServer(async (req, res) => {
         const id = parseInt(stopMatch[1]);
         
         const child = runningProcesses.get(id);
+        
         if (child) {
-            child.kill(); // Terminate the native process
+            // CRITICAL FIX: Forcefully kill the entire process tree so nothing is left behind
+            if (process.platform === 'win32') {
+                // Windows: /T kills the tree, /F forcefully terminates it
+                exec(`taskkill /pid ${child.pid} /T /F`, (err) => {
+                    if (err) console.error(`[Stop Error] Failed to taskkill PID ${child.pid}`);
+                });
+            } else {
+                // Linux/Termux fallback
+                child.kill('SIGINT');
+            }
+
             runningProcesses.delete(id);
             
             db.run(`UPDATE projects SET status = 'stopped' WHERE id = ?`, [id], () => {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ message: "Suspended successfully" }));
+                res.end(JSON.stringify({ message: "Service forcefully stopped" }));
             });
         } else {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Service is not running' }));
+            // Anti-Ghosting: If the frontend thinks it's running but the backend lost it in memory,
+            // force the database back to stopped so the UI corrects itself.
+            db.run(`UPDATE projects SET status = 'stopped' WHERE id = ?`, [id], () => {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ message: "Cleaned up ghost state" }));
+            });
         }
         return;
     }
