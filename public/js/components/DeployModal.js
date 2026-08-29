@@ -17,6 +17,12 @@ export function renderDeployModal() {
                         <button type="button" id="tabLocal" class="flex-1 py-1.5 text-sm font-medium rounded-md bg-rElevated text-white shadow transition">Local Folder</button>
                         <button type="button" id="tabGithub" class="flex-1 py-1.5 text-sm font-medium rounded-md text-gray-400 hover:text-gray-200 transition">GitHub Repo</button>
                     </div>
+
+                    <!-- App Type Toggle -->
+                    <div class="flex space-x-2 p-1 bg-rBase border border-rBorder rounded-lg mt-2">
+                        <button type="button" id="typeNode" class="flex-1 py-1 text-xs font-medium rounded-md bg-rAccent text-white shadow transition">Node.js Server</button>
+                        <button type="button" id="typeStatic" class="flex-1 py-1 text-xs font-medium rounded-md text-gray-400 hover:text-gray-200 transition">Static Site</button>
+                    </div>
                     
                     <div>
                         <label class="block text-sm font-medium text-gray-300 mb-1.5">Service Name</label>
@@ -35,14 +41,14 @@ export function renderDeployModal() {
                         <p class="text-xs text-gray-500 mt-1.5">R-Render will automatically clone the repo and run npm install.</p>
                     </div>
                     
-                    <div class="flex space-x-4">
+                    <div id="nodeConfigGroup" class="flex space-x-4">
                         <div class="flex-1">
                             <label class="block text-sm font-medium text-gray-300 mb-1.5">Start Command</label>
-                            <input type="text" id="appCommand" required placeholder="npm start" class="w-full bg-rBase border border-rBorder rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-rAccent focus:ring-1 focus:ring-rAccent transition font-mono">
+                            <input type="text" id="appCommand" placeholder="npm start" class="w-full bg-rBase border border-rBorder rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-rAccent focus:ring-1 focus:ring-rAccent transition font-mono">
                         </div>
                         <div class="w-24">
                             <label class="block text-sm font-medium text-gray-300 mb-1.5">Port</label>
-                            <input type="number" id="appPort" required placeholder="3000" class="w-full bg-rBase border border-rBorder rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-rAccent focus:ring-1 focus:ring-rAccent transition font-mono">
+                            <input type="number" id="appPort" placeholder="3000" class="w-full bg-rBase border border-rBorder rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-rAccent focus:ring-1 focus:ring-rAccent transition font-mono">
                         </div>
                     </div>
                     

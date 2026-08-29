@@ -39,21 +39,17 @@ db.serialize(() => {
 
     db.run(`UPDATE projects SET status = 'stopped'`);
 
-    // EMERGENCY RESET BLOCK
+    // SECURE BOOT: Only creates admin if it doesn't exist. No emergency resets.
     db.get("SELECT * FROM users WHERE role = 'root'", async (err, row) => {
-        const hashedPwd = await bcrypt.hash('admin123', 10);
         if (!row) {
+            const hashedPwd = await bcrypt.hash('admin123', 10);
             db.run(`INSERT INTO users (username, password, role, ram_limit) VALUES (?, ?, 'root', 999999)`, ['root', hashedPwd]);
             console.log(`[Security] Default Root Admin created.`);
-        } else {
-            // TEMPORARY EMERGENCY RESET
-            db.run(`UPDATE users SET password = ? WHERE role = 'root'`, [hashedPwd]);
-            console.log(`\n[SECURITY OVERRIDE SUCCESSFUL]`);
-            console.log(`Your Root Username is: ${row.username}`);
-            console.log(`Your Password has been temporarily reset to: admin123\n`);
-        }
+        } 
     });
-const PORT = 3000;
+});
+
+const PORT = 2999;
 
 const getBody = (req) => {
     return new Promise((resolve, reject) => {
@@ -79,7 +75,6 @@ function getFreePort(startingPort) {
     });
 }
 
-// Security Checkpoint Middleware
 const authenticate = (req) => {
     return new Promise((resolve, reject) => {
         const authHeader = req.headers['authorization'];
@@ -184,8 +179,6 @@ const server = http.createServer(async (req, res) => {
     }
 
     // --- PROJECT ISOLATION ROUTER ---
-
-    // GET: Fetch isolated projects
     if (pathname === '/api/projects' && req.method === 'GET') {
         try {
             const user = await authenticate(req);
@@ -197,7 +190,6 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
-    // POST: Create local project
     if (pathname === '/api/projects' && req.method === 'POST') {
         try {
             const user = await authenticate(req);
@@ -206,7 +198,12 @@ const server = http.createServer(async (req, res) => {
                 `INSERT INTO projects (owner_id, name, path, start_command, port, status) VALUES (?, ?, ?, ?, ?, 'stopped')`,
                 [user.id, name, projectPath, start_command, port],
                 function(err) {
-                    if (err) return res.writeHead(400).end(JSON.stringify({ error: err.message }));
+                    if (err) {
+                        if (err.message.includes('UNIQUE constraint failed: projects.name')) {
+                            return res.writeHead(400).end(JSON.stringify({ error: "That service name is already taken by another project on this server." }));
+                        }
+                        return res.writeHead(400).end(JSON.stringify({ error: err.message }));
+                    }
                     res.writeHead(201).end(JSON.stringify({ id: this.lastID, message: "Created" }));
                 }
             );
@@ -214,7 +211,6 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
-    // POST: GitHub Deploy
     if (pathname === '/api/projects/github' && req.method === 'POST') {
         try {
             const user = await authenticate(req);
@@ -227,7 +223,6 @@ const server = http.createServer(async (req, res) => {
             if (fs.existsSync(targetPath)) return res.writeHead(400).end(JSON.stringify({ error: 'Folder already exists.' }));
 
             await execPromise(`git clone ${repoUrl} "${targetPath}"`);
-
             const packageJsonPath = path.join(targetPath, 'package.json');
             if (fs.existsSync(packageJsonPath)) await execPromise(`cd "${targetPath}" && npm install`);
 
@@ -235,7 +230,12 @@ const server = http.createServer(async (req, res) => {
                 `INSERT INTO projects (owner_id, name, path, start_command, port, status) VALUES (?, ?, ?, ?, ?, 'stopped')`,
                 [user.id, name, targetPath, start_command, port],
                 function(err) {
-                    if (err) return res.writeHead(400).end(JSON.stringify({ error: err.message }));
+                    if (err) {
+                        if (err.message.includes('UNIQUE constraint failed: projects.name')) {
+                            return res.writeHead(400).end(JSON.stringify({ error: "That service name is already taken by another project on this server." }));
+                        }
+                        return res.writeHead(400).end(JSON.stringify({ error: err.message }));
+                    }
                     res.writeHead(201).end(JSON.stringify({ id: this.lastID, message: "Successfully cloned and installed!" }));
                 }
             );
@@ -253,7 +253,6 @@ const server = http.createServer(async (req, res) => {
 
             res.setHeader('Content-Type', 'application/json');
 
-            // 1. Enforce strict isolation
             const project = await new Promise((resolve, reject) => {
                 db.get("SELECT * FROM projects WHERE id = ?", [id], (err, row) => {
                     if (err) reject(err); else resolve(row);
@@ -263,7 +262,6 @@ const server = http.createServer(async (req, res) => {
             if (!project) return res.writeHead(404).end(JSON.stringify({ error: 'Not found' }));
             if (project.owner_id !== user.id) return res.writeHead(403).end(JSON.stringify({ error: 'Forbidden: You do not own this service' }));
 
-            // 2. Process Actions
             if (action === 'info' && req.method === 'GET') {
                 return res.writeHead(200).end(JSON.stringify(project));
             }
@@ -299,10 +297,18 @@ const server = http.createServer(async (req, res) => {
             }
 
             if (action === 'start' && req.method === 'POST') {
-                if (runningProcesses.has(id)) return res.writeHead(400).end(JSON.stringify({ error: 'Running' }));
+                if (runningProcesses.has(id) || project.status === 'running') return res.writeHead(400).end(JSON.stringify({ error: 'Running' }));
+                
+                if (project.start_command === 'STATIC') {
+                    db.run(`UPDATE projects SET status = 'running' WHERE id = ?`, [id], () => {
+                        projectLogs.set(id, [`--- System: Static Site '${project.name}' is now live at /site/${project.name} ---`]);
+                        res.writeHead(200).end(JSON.stringify({ message: "Started", port: "STATIC" }));
+                    });
+                    return;
+                }
+
                 const safePath = project.path.replace(/\\/g, '/');
                 const parts = project.start_command.split(' ');
-
                 const requestedPort = project.port || 3001;
                 const actualPort = await getFreePort(requestedPort);
 
@@ -350,7 +356,7 @@ const server = http.createServer(async (req, res) => {
                     });
                 } else {
                     db.run(`UPDATE projects SET status = 'stopped' WHERE id = ?`, [id], () => {
-                        res.writeHead(200).end(JSON.stringify({ message: "Cleaned up ghost state" }));
+                        res.writeHead(200).end(JSON.stringify({ message: "Cleaned up state" }));
                     });
                 }
                 return;
@@ -360,7 +366,39 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
-    // --- STATIC FILE SERVER ---
+    // --- HOSTED STATIC SITES ROUTER ---
+    if (pathname.startsWith('/site/')) {
+        const pathParts = pathname.split('/');
+        const projectName = pathParts[2];
+        const relativeFilePath = pathParts.slice(3).join('/') || 'index.html';
+
+        db.get("SELECT path, status FROM projects WHERE name = ?", [projectName], (err, project) => {
+            if (err || !project) return res.writeHead(404).end('404: Project Not Found');
+            if (project.status !== 'running') return res.writeHead(403).end('403: Site is currently stopped');
+            
+            const safePath = project.path.replace(/\\/g, '/');
+            let filePath = path.join(safePath, relativeFilePath);
+            
+            let extname = path.extname(filePath);
+            let contentType = 'text/html';
+            switch (extname) {
+                case '.js': contentType = 'text/javascript'; break;
+                case '.css': contentType = 'text/css'; break;
+                case '.json': contentType = 'application/json'; break;
+                case '.png': contentType = 'image/png'; break;
+                case '.jpg': contentType = 'image/jpeg'; break;
+                case '.svg': contentType = 'image/svg+xml'; break;
+            }
+
+            fs.readFile(filePath, (err, content) => {
+                if (err) res.writeHead(404).end('404: File Not Found');
+                else res.writeHead(200, { 'Content-Type': contentType }).end(content, 'utf-8');
+            });
+        });
+        return;
+    }
+
+    // --- MAIN STATIC FILE SERVER ---
     let filePath = path.join(__dirname, 'public', pathname === '/' ? 'index.html' : pathname);
     let extname = path.extname(filePath);
     let contentType = 'text/html';

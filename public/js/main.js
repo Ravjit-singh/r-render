@@ -343,6 +343,27 @@ function setupModalEvents() {
         groupLocal.classList.add('hidden');
     });
 
+    let activeType = 'node';
+    const typeNode = document.getElementById('typeNode');
+    const typeStatic = document.getElementById('typeStatic');
+    const nodeConfigGroup = document.getElementById('nodeConfigGroup');
+
+    typeNode?.addEventListener('click', () => {
+        activeType = 'node';
+        typeNode.className = 'flex-1 py-1 text-xs font-medium rounded-md bg-rAccent text-white shadow transition';
+        typeStatic.className = 'flex-1 py-1 text-xs font-medium rounded-md text-gray-400 hover:text-gray-200 transition';
+        nodeConfigGroup.classList.remove('hidden');
+        nodeConfigGroup.classList.add('flex');
+    });
+
+    typeStatic?.addEventListener('click', () => {
+        activeType = 'static';
+        typeStatic.className = 'flex-1 py-1 text-xs font-medium rounded-md bg-rAccent text-white shadow transition';
+        typeNode.className = 'flex-1 py-1 text-xs font-medium rounded-md text-gray-400 hover:text-gray-200 transition';
+        nodeConfigGroup.classList.add('hidden');
+        nodeConfigGroup.classList.remove('flex');
+    });
+
     const submitBtn = document.getElementById('submitDeployBtn');
     document.getElementById('deployForm')?.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -358,8 +379,8 @@ function setupModalEvents() {
                 await createProject({
                     name: document.getElementById('appName').value,
                     path: pathVal,
-                    start_command: document.getElementById('appCommand').value,
-                    port: document.getElementById('appPort').value
+                    start_command: activeType === 'static' ? 'STATIC' : (document.getElementById('appCommand').value || 'npm start'),
+                    port: activeType === 'static' ? 0 : (document.getElementById('appPort').value || 3000)
                 });
             } else {
                 const repoVal = document.getElementById('appRepo').value;
@@ -369,8 +390,8 @@ function setupModalEvents() {
                 await createGithubProject({
                     name: document.getElementById('appName').value,
                     repoUrl: repoVal,
-                    start_command: document.getElementById('appCommand').value,
-                    port: document.getElementById('appPort').value
+                    start_command: activeType === 'static' ? 'STATIC' : (document.getElementById('appCommand').value || 'npm start'),
+                    port: activeType === 'static' ? 0 : (document.getElementById('appPort').value || 3000)
                 });
             }
             
