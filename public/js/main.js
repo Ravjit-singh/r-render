@@ -1,12 +1,15 @@
 import { renderAuthScreen } from './components/Auth.js';
 import { 
     loginUser, registerUser, fetchProjects, createProject, startProject, stopProject, 
-    getProjectInfo, getProjectLogs, sendCommand, deleteProject, createGithubProject 
+    getProjectInfo, getProjectLogs, sendCommand, deleteProject, createGithubProject,
+    fetchUsers, updateUserRole, updateProfile
 } from './api.js';
 import { renderNavbar } from './components/Navbar.js';
 import { renderServiceList } from './components/ServiceList.js';
 import { renderDeployModal } from './components/DeployModal.js';
 import { renderProjectDetails } from './components/ProjectDetails.js';
+import { renderSettingsModal } from './components/SettingsModal.js';
+import { renderAdminView } from './components/AdminView.js';
 
 const app = document.getElementById('app');
 let activeLogInterval = null;
@@ -14,33 +17,80 @@ let activeLogInterval = null;
 // --- 1. THE ROUTER ---
 export async function init() {
     const token = localStorage.getItem('token');
+    const user = JSON.parse(localStorage.getItem('user') || '{}');
     clearInterval(activeLogInterval);
     
     if (!token) {
-        // If not logged in, render the Auth view
         app.innerHTML = renderAuthScreen();
         setupAuthEvents();
     } else {
-        // If logged in, render the persistent shell (Navbar & Modal)
         app.innerHTML = `
             ${renderNavbar()}
             <div id="main-content" class="flex-grow flex flex-col w-full"></div>
             ${renderDeployModal()}
+            ${renderSettingsModal(user)}
         `;
         
-        // Setup Global Shell Events
-        document.getElementById('logoutBtn')?.addEventListener('click', () => {
-            localStorage.removeItem('token');
-            localStorage.removeItem('user');
-            init(); // Re-boot the app into Auth mode
-        });
-
+        setupNavbarEvents();
         setupModalEvents();
+        setupSettingsEvents();
         await loadDashboard();
     }
 }
 
-// --- 2. AUTHENTICATION LOGIC ---
+// --- 2. GLOBAL UI EVENTS ---
+function setupNavbarEvents() {
+    document.getElementById('logoutBtn')?.addEventListener('click', () => {
+        localStorage.clear();
+        init(); 
+    });
+
+    document.getElementById('adminPanelBtn')?.addEventListener('click', loadAdminView);
+    
+    document.getElementById('settingsBtn')?.addEventListener('click', () => {
+        const modal = document.getElementById('settingsModal');
+        modal.classList.remove('hidden'); modal.classList.add('flex');
+        setTimeout(() => { 
+            modal.classList.remove('opacity-0'); 
+            document.getElementById('settingsModalContent').classList.remove('scale-95'); 
+        }, 10);
+    });
+}
+
+function setupSettingsEvents() {
+    const modal = document.getElementById('settingsModal');
+    const toggleModal = (show) => {
+        if (show) { modal.classList.remove('hidden'); modal.classList.add('flex'); setTimeout(() => { modal.classList.remove('opacity-0'); document.getElementById('settingsModalContent').classList.remove('scale-95'); }, 10); } 
+        else { modal.classList.add('opacity-0'); document.getElementById('settingsModalContent').classList.add('scale-95'); setTimeout(() => { modal.classList.add('hidden'); modal.classList.remove('flex'); }, 200); }
+    };
+
+    document.getElementById('closeSettingsBtn')?.addEventListener('click', () => toggleModal(false));
+    document.getElementById('cancelSettingsBtn')?.addEventListener('click', () => toggleModal(false));
+
+    document.getElementById('settingsForm')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const submitBtn = document.getElementById('submitSettingsBtn');
+        const originalText = submitBtn.innerText;
+        submitBtn.innerText = 'Saving...';
+        submitBtn.disabled = true;
+
+        try {
+            const newUsername = document.getElementById('updateUsername').value;
+            const newPassword = document.getElementById('updatePassword').value;
+            await updateProfile(newUsername, newPassword);
+            
+            alert('Profile updated successfully! Please log in again.');
+            localStorage.clear();
+            init();
+        } catch (error) {
+            alert(error.message);
+            submitBtn.innerText = originalText;
+            submitBtn.disabled = false;
+        }
+    });
+}
+
+// --- 3. AUTHENTICATION LOGIC ---
 function setupAuthEvents() {
     let isLoginMode = true;
     const form = document.getElementById('authForm');
@@ -73,7 +123,7 @@ function setupAuthEvents() {
                 const data = await loginUser(user, pass);
                 localStorage.setItem('token', data.token);
                 localStorage.setItem('user', JSON.stringify(data.user));
-                init(); // Success: Load the dashboard
+                init(); 
             } else {
                 const data = await registerUser(user, pass);
                 msgBox.innerText = data.message;
@@ -90,12 +140,60 @@ function setupAuthEvents() {
     });
 }
 
-// --- 3. DASHBOARD VIEW ---
+// --- 4. ADMIN VIEW LOGIC ---
+async function loadAdminView() {
+    clearInterval(activeLogInterval);
+    const mainContent = document.getElementById('main-content');
+    const user = JSON.parse(localStorage.getItem('user') || '{}');
+    
+    mainContent.innerHTML = `
+        <main class="max-w-[1000px] w-full mx-auto mt-10 px-6 pb-12 flex-grow">
+            <div class="h-64 bg-rElevated border border-rBorder rounded-lg w-full animate-pulse"></div>
+        </main>
+    `;
+
+    try {
+        const allUsers = await fetchUsers();
+        mainContent.innerHTML = `
+            <main class="max-w-[1000px] w-full mx-auto mt-10 px-4 sm:px-6 pb-12 flex-grow">
+                ${renderAdminView(allUsers, user)}
+            </main>
+        `;
+
+        document.getElementById('backToDashFromAdminBtn')?.addEventListener('click', loadDashboard);
+
+        mainContent.querySelectorAll('.update-role-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const id = e.target.getAttribute('data-id');
+                const selectEl = document.getElementById(`role-select-${id}`);
+                const newRole = selectEl.value;
+                
+                const originalText = e.target.innerText;
+                e.target.innerText = 'Saving...';
+                e.target.disabled = true;
+
+                try {
+                    await updateUserRole(id, newRole);
+                    alert('User role updated successfully');
+                    loadAdminView(); // Refresh the list
+                } catch (err) {
+                    alert(err.message);
+                    e.target.innerText = originalText;
+                    e.target.disabled = false;
+                }
+            });
+        });
+    } catch (error) {
+        alert("Failed to load admin dashboard: " + error.message);
+        loadDashboard();
+    }
+}
+
+// --- 5. DASHBOARD VIEW ---
 async function loadDashboard() {
     clearInterval(activeLogInterval);
     const mainContent = document.getElementById('main-content');
     
-    // Inject the loading skeleton into the dynamic content area
     mainContent.innerHTML = `
         <main class="max-w-[1000px] w-full mx-auto mt-10 px-6 pb-12 flex-grow">
             <div class="flex justify-between items-end mb-6">
@@ -113,7 +211,6 @@ async function loadDashboard() {
         contentArea.className = ''; 
         contentArea.innerHTML = renderServiceList(projects);
         
-        // Attach dynamic row clicks to the newly created area
         contentArea.addEventListener('click', async (e) => {
             const btn = e.target.closest('.action-btn');
             if (btn) {
@@ -136,7 +233,7 @@ async function loadDashboard() {
     }
 }
 
-// --- 4. PROJECT DETAILS & TERMINAL VIEW ---
+// --- 6. PROJECT DETAILS & TERMINAL VIEW ---
 async function loadProjectDetails(id) {
     clearInterval(activeLogInterval);
     const mainContent = document.getElementById('main-content');
@@ -157,7 +254,7 @@ async function loadProjectDetails(id) {
         setupDetailsEvents(project);
         startLogPolling(id);
     } catch (err) {
-        loadDashboard(); // Fallback to list on error
+        loadDashboard(); 
     }
 }
 
@@ -205,14 +302,14 @@ function startLogPolling(id) {
         try {
             const { logs } = await getProjectLogs(id);
             terminal.innerHTML = logs.map(line => `<span>${line}</span>`).join('');
-            terminal.scrollTop = terminal.scrollHeight; // Auto-scroll
+            terminal.scrollTop = terminal.scrollHeight; 
         } catch (e) { }
     };
     fetchLogs();
     activeLogInterval = setInterval(fetchLogs, 1000);
 }
 
-// --- 5. GLOBAL DEPLOY MODAL EVENTS ---
+// --- 7. GLOBAL DEPLOY MODAL EVENTS ---
 function setupModalEvents() {
     const modal = document.getElementById('deployModal');
     const toggleModal = (show) => {
