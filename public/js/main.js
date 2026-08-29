@@ -14,6 +14,38 @@ import { renderAdminView } from './components/AdminView.js';
 const app = document.getElementById('app');
 let activeLogInterval = null;
 
+// --- CUSTOM TOAST SYSTEM ---
+function showToast(msg, type = "success") {
+    let toast = document.getElementById('toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'toast';
+        toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 md:top-auto md:left-auto md:bottom-8 md:right-8 bg-surface border border-borderline/10 text-accent px-5 py-3.5 rounded-2xl flex items-center gap-3 transform -translate-y-20 md:translate-y-20 opacity-0 pointer-events-none transition-all duration-300 z-[100] min-w-[200px] shadow-inner-light';
+        document.body.appendChild(toast);
+    }
+    
+    const iconHtml = type === 'error' 
+        ? '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg>'
+        : '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path></svg>';
+    
+    const colorClass = type === 'error' ? 'border-red-500/30 bg-red-500/10 text-red-500' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500';
+
+    toast.innerHTML = `
+        <div class="w-6 h-6 shrink-0 rounded-full flex items-center justify-center border ${colorClass}">${iconHtml}</div>
+        <span class="text-sm font-bold tracking-tight">${msg}</span>
+    `;
+
+    toast.classList.remove('opacity-0', 'pointer-events-none');
+    toast.classList.remove(window.innerWidth < 768 ? '-translate-y-20' : 'translate-y-20');
+    toast.classList.add('translate-y-0');
+
+    setTimeout(() => {
+        toast.classList.add('opacity-0', 'pointer-events-none');
+        toast.classList.remove('translate-y-0');
+        toast.classList.add(window.innerWidth < 768 ? '-translate-y-20' : 'translate-y-20');
+    }, 3000);
+}
+
 // --- 1. THE ROUTER ---
 export async function init() {
     const token = localStorage.getItem('token');
@@ -76,11 +108,16 @@ function setupSettingsEvents() {
             const newPassword = document.getElementById('updatePassword').value;
             await updateProfile(newUsername, newPassword);
             
-            alert('Vault secured. Please re-authenticate.');
-            localStorage.clear();
-            init();
+            showToast('Vault secured. Re-authenticating...', 'success');
+            
+            // Auto redirect sequence
+            setTimeout(() => {
+                localStorage.clear();
+                init();
+            }, 2000);
+            
         } catch (error) {
-            alert(error.message);
+            showToast(error.message, 'error');
             submitBtn.innerText = originalText;
             submitBtn.disabled = false;
         }
@@ -171,16 +208,17 @@ async function loadAdminView() {
 
                 try {
                     await updateUserRole(id, newRole);
+                    showToast('Role synchronized successfully', 'success');
                     loadAdminView(); 
                 } catch (err) {
-                    alert(err.message);
+                    showToast(err.message, 'error');
                     e.target.innerText = originalText;
                     e.target.disabled = false;
                 }
             });
         });
     } catch (error) {
-        alert("Authorization fault: " + error.message);
+        showToast("Authorization fault: " + error.message, 'error');
         loadDashboard();
     }
 }
@@ -215,8 +253,13 @@ async function loadDashboard() {
                 if (action === 'start' || action === 'stop') {
                     btn.style.opacity = '0.5';
                     btn.style.pointerEvents = 'none';
-                    if (action === 'start') await startProject(id);
-                    else await stopProject(id);
+                    if (action === 'start') {
+                        await startProject(id);
+                        showToast('Service ignited', 'success');
+                    } else {
+                        await stopProject(id);
+                        showToast('Service halted', 'success');
+                    }
                     return loadDashboard();
                 } else if (action === 'details') {
                     loadProjectDetails(id);
@@ -273,8 +316,13 @@ function setupDetailsEvents(project) {
         btn.innerText = 'Transmitting...';
         btn.disabled = true;
         const action = btn.getAttribute('data-action');
-        if (action === 'start') await startProject(project.id);
-        else await stopProject(project.id);
+        if (action === 'start') {
+            await startProject(project.id);
+            showToast('Service ignited', 'success');
+        } else {
+            await stopProject(project.id);
+            showToast('Service halted', 'success');
+        }
         loadProjectDetails(project.id); 
     });
 
@@ -283,12 +331,16 @@ function setupDetailsEvents(project) {
         await stopProject(project.id);
         await new Promise(r => setTimeout(r, 1000)); 
         await startProject(project.id);
+        showToast('Service restarted', 'success');
         loadProjectDetails(project.id);
     });
 
+    // Custom non-blocking confirm overlay
     document.getElementById('deleteProjectBtn').addEventListener('click', async () => {
-        if (confirm(`Confirm destructive action: Annihilate ${project.name}?`)) {
+        const confirmDelete = window.confirm(`Confirm destructive action: Annihilate ${project.name}?`);
+        if (confirmDelete) {
             await deleteProject(project.id);
+            showToast('Architecture annihilated', 'success');
             loadDashboard();
         }
     });
@@ -399,9 +451,10 @@ function setupModalEvents() {
             
             closeSequence();
             document.getElementById('deployForm').reset();
+            showToast('Deployment configured successfully', 'success');
             loadDashboard();
         } catch (error) {
-            alert(error.message);
+            showToast(error.message, 'error');
         } finally {
             submitBtn.innerText = originalText;
             submitBtn.disabled = false;

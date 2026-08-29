@@ -50,7 +50,32 @@
         }
 
         body { background-color: rgb(var(--c-base)); color: rgb(var(--c-accent)); -webkit-font-smoothing: antialiased; }
+        /* Custom Premium Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
         
+        ::-webkit-scrollbar-track {
+            background: transparent;
+            margin: 4px; /* Keeps the scrollbar from touching the absolute edges */
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: rgb(var(--c-elevated));
+            border-radius: 10px;
+            border: 1px solid rgb(var(--c-border) / 0.1);
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgb(var(--c-muted) / 0.6);
+        }
+
+        /* Firefox Fallback */
+        * {
+            scrollbar-width: thin;
+            scrollbar-color: rgb(var(--c-elevated)) transparent;
+        }
         .ambient-glow { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: radial-gradient(circle at 50% 0%, rgba(59,130,246,0.04) 0%, rgba(0,0,0,0) 60%); pointer-events: none; z-index: 0; }
         
         .glass-card { background: linear-gradient(180deg, rgb(var(--c-surface)), rgb(var(--c-base))); border-radius: 24px; box-shadow: var(--tw-shadow-elite); transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); position: relative; z-index: 10; border: 1px solid rgb(var(--c-border) / 0.1); }

@@ -14,6 +14,19 @@ const execPromise = util.promisify(exec);
 const runningProcesses = new Map();
 const projectLogs = new Map();
 
+// --- RATE LIMITER MEMORY STORES ---
+const requestCounts = new Map();
+const loginAttempts = new Map();
+
+const checkRateLimit = (ip, map, limit, windowMs) => {
+    const now = Date.now();
+    let record = map.get(ip);
+    if (!record || record.resetTime < now) record = { count: 0, resetTime: now + windowMs };
+    record.count += 1;
+    map.set(ip, record);
+    return record.count <= limit;
+};
+
 const dbPath = path.join(__dirname, 'database.sqlite');
 const db = new sqlite3.Database(dbPath);
 
@@ -39,7 +52,6 @@ db.serialize(() => {
 
     db.run(`UPDATE projects SET status = 'stopped'`);
 
-    // SECURE BOOT: Only creates admin if it doesn't exist. No emergency resets.
     db.get("SELECT * FROM users WHERE role = 'root'", async (err, row) => {
         if (!row) {
             const hashedPwd = await bcrypt.hash('admin123', 10);
@@ -69,9 +81,7 @@ function getFreePort(startingPort) {
             const port = server.address().port;
             server.close(() => resolve(port)); 
         });
-        server.on('error', () => {
-            resolve(getFreePort(startingPort + 1)); 
-        });
+        server.on('error', () => resolve(getFreePort(startingPort + 1)));
     });
 }
 
@@ -79,7 +89,6 @@ const authenticate = (req) => {
     return new Promise((resolve, reject) => {
         const authHeader = req.headers['authorization'];
         if (!authHeader) return reject('No token provided');
-        
         const token = authHeader.split(' ')[1];
         jwt.verify(token, JWT_SECRET, (err, decoded) => {
             if (err) return reject('Invalid or expired token');
@@ -91,6 +100,27 @@ const authenticate = (req) => {
 const server = http.createServer(async (req, res) => {
     const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
     const pathname = parsedUrl.pathname;
+    const clientIp = req.socket.remoteAddress || 'unknown';
+
+    // --- SECURITY HEADERS ---
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+
+    // --- API RATE LIMITING ---
+    if (pathname.startsWith('/api/')) {
+        res.setHeader('Content-Type', 'application/json');
+        
+        if (pathname === '/api/auth/login' && req.method === 'POST') {
+            if (!checkRateLimit(clientIp, loginAttempts, 10, 15 * 60 * 1000)) {
+                return res.writeHead(429).end(JSON.stringify({ error: "Security Lock: Too many authentication attempts." }));
+            }
+        } else {
+            if (!checkRateLimit(clientIp, requestCounts, 200, 15 * 60 * 1000)) {
+                return res.writeHead(429).end(JSON.stringify({ error: "Rate limit exceeded." }));
+            }
+        }
+    }
 
     // --- AUTHENTICATION ROUTER ---
     if (pathname === '/api/auth/register' && req.method === 'POST') {
@@ -101,7 +131,7 @@ const server = http.createServer(async (req, res) => {
             
             db.run(`INSERT INTO users (username, password, role) VALUES (?, ?, 'pending')`, [username, hashedPwd], function(err) {
                 if (err) return res.writeHead(400).end(JSON.stringify({ error: "Username already taken" }));
-                res.writeHead(201).end(JSON.stringify({ message: "Registration successful. Awaiting root admin approval." }));
+                res.writeHead(201).end(JSON.stringify({ message: "Registration successful. Awaiting verification." }));
             });
         } catch (error) { res.writeHead(500).end(JSON.stringify({ error: "Server error" })); }
         return;
@@ -116,6 +146,7 @@ const server = http.createServer(async (req, res) => {
                 const isMatch = await bcrypt.compare(password, user.password);
                 if (!isMatch) return res.writeHead(401).end(JSON.stringify({ error: "Invalid credentials" }));
                 
+                loginAttempts.delete(clientIp); // Clear blocks on success
                 const token = jwt.sign(
                     { id: user.id, username: user.username, role: user.role, ram_limit: user.ram_limit },
                     JWT_SECRET, { expiresIn: '24h' }
@@ -149,9 +180,9 @@ const server = http.createServer(async (req, res) => {
             const targetId = parseInt(roleMatch[1]);
             const { role } = await getBody(req);
             
-            if (targetId === 1 && role !== 'root') return res.writeHead(400).end(JSON.stringify({ error: "Cannot demote the primary root account." }));
+            if (targetId === 1 && role !== 'root') return res.writeHead(400).end(JSON.stringify({ error: "Cannot demote root account." }));
             db.run(`UPDATE users SET role = ? WHERE id = ?`, [role, targetId], () => {
-                res.writeHead(200).end(JSON.stringify({ message: "User role updated successfully" }));
+                res.writeHead(200).end(JSON.stringify({ message: "Role updated" }));
             });
         } catch (err) { res.writeHead(401).end(JSON.stringify({ error: err })); }
         return;
@@ -165,12 +196,12 @@ const server = http.createServer(async (req, res) => {
             if (newPassword) {
                 const hashedPwd = await bcrypt.hash(newPassword, 10);
                 db.run(`UPDATE users SET username = ?, password = ? WHERE id = ?`, [newUsername || user.username, hashedPwd, user.id], (err) => {
-                    if (err) return res.writeHead(400).end(JSON.stringify({ error: "Username might be taken." }));
+                    if (err) return res.writeHead(400).end(JSON.stringify({ error: "Username taken." }));
                     res.writeHead(200).end(JSON.stringify({ message: "Profile updated." }));
                 });
             } else if (newUsername) {
                 db.run(`UPDATE users SET username = ? WHERE id = ?`, [newUsername, user.id], (err) => {
-                    if (err) return res.writeHead(400).end(JSON.stringify({ error: "Username already taken." }));
+                    if (err) return res.writeHead(400).end(JSON.stringify({ error: "Username taken." }));
                     res.writeHead(200).end(JSON.stringify({ message: "Username updated." }));
                 });
             } else { res.writeHead(400).end(JSON.stringify({ error: "No changes provided." })); }
@@ -199,9 +230,7 @@ const server = http.createServer(async (req, res) => {
                 [user.id, name, projectPath, start_command, port],
                 function(err) {
                     if (err) {
-                        if (err.message.includes('UNIQUE constraint failed: projects.name')) {
-                            return res.writeHead(400).end(JSON.stringify({ error: "That service name is already taken by another project on this server." }));
-                        }
+                        if (err.message.includes('UNIQUE constraint failed: projects.name')) return res.writeHead(400).end(JSON.stringify({ error: "Service name already taken on this cluster." }));
                         return res.writeHead(400).end(JSON.stringify({ error: err.message }));
                     }
                     res.writeHead(201).end(JSON.stringify({ id: this.lastID, message: "Created" }));
@@ -218,7 +247,6 @@ const server = http.createServer(async (req, res) => {
 
             const appsDir = path.join(__dirname, 'hosted_apps');
             if (!fs.existsSync(appsDir)) fs.mkdirSync(appsDir);
-
             const targetPath = path.join(appsDir, name);
             if (fs.existsSync(targetPath)) return res.writeHead(400).end(JSON.stringify({ error: 'Folder already exists.' }));
 
@@ -231,27 +259,22 @@ const server = http.createServer(async (req, res) => {
                 [user.id, name, targetPath, start_command, port],
                 function(err) {
                     if (err) {
-                        if (err.message.includes('UNIQUE constraint failed: projects.name')) {
-                            return res.writeHead(400).end(JSON.stringify({ error: "That service name is already taken by another project on this server." }));
-                        }
+                        if (err.message.includes('UNIQUE constraint failed: projects.name')) return res.writeHead(400).end(JSON.stringify({ error: "Service name taken." }));
                         return res.writeHead(400).end(JSON.stringify({ error: err.message }));
                     }
-                    res.writeHead(201).end(JSON.stringify({ id: this.lastID, message: "Successfully cloned and installed!" }));
+                    res.writeHead(201).end(JSON.stringify({ id: this.lastID, message: "Cloned & Installed" }));
                 }
             );
         } catch (error) { res.writeHead(500).end(JSON.stringify({ error: "Deployment failed." })); }
         return;
     }
 
-    // DYNAMIC PROJECT ACTIONS
     const routeMatch = pathname.match(/^\/api\/projects\/(\d+)(?:\/(start|stop|logs|command|info))?$/);
     if (routeMatch) {
         try {
             const user = await authenticate(req);
             const id = parseInt(routeMatch[1]);
             const action = routeMatch[2] || 'info';
-
-            res.setHeader('Content-Type', 'application/json');
 
             const project = await new Promise((resolve, reject) => {
                 db.get("SELECT * FROM projects WHERE id = ?", [id], (err, row) => {
@@ -260,40 +283,29 @@ const server = http.createServer(async (req, res) => {
             });
 
             if (!project) return res.writeHead(404).end(JSON.stringify({ error: 'Not found' }));
-            if (project.owner_id !== user.id) return res.writeHead(403).end(JSON.stringify({ error: 'Forbidden: You do not own this service' }));
+            if (project.owner_id !== user.id) return res.writeHead(403).end(JSON.stringify({ error: 'Forbidden' }));
 
-            if (action === 'info' && req.method === 'GET') {
-                return res.writeHead(200).end(JSON.stringify(project));
-            }
+            if (action === 'info' && req.method === 'GET') return res.writeHead(200).end(JSON.stringify(project));
 
             if (action === 'info' && req.method === 'DELETE') {
                 const child = runningProcesses.get(id);
                 if (child && process.platform === 'win32') exec(`taskkill /pid ${child.pid} /T /F`);
-                runningProcesses.delete(id);
-                projectLogs.delete(id);
-                
-                db.run("DELETE FROM projects WHERE id = ?", [id], () => {
-                    res.writeHead(200).end(JSON.stringify({ message: "Deleted" }));
-                });
+                runningProcesses.delete(id); projectLogs.delete(id);
+                db.run("DELETE FROM projects WHERE id = ?", [id], () => res.writeHead(200).end(JSON.stringify({ message: "Deleted" })));
                 return;
             }
 
-            if (action === 'logs' && req.method === 'GET') {
-                const logs = projectLogs.get(id) || ["Waiting for process to start..."];
-                return res.writeHead(200).end(JSON.stringify({ logs }));
-            }
+            if (action === 'logs' && req.method === 'GET') return res.writeHead(200).end(JSON.stringify({ logs: projectLogs.get(id) || ["Waiting for process..."] }));
 
             if (action === 'command' && req.method === 'POST') {
                 const { command } = await getBody(req);
                 const child = runningProcesses.get(id);
                 if (child && child.stdin) {
                     child.stdin.write(command + '\n');
-                    const logs = projectLogs.get(id) || [];
-                    logs.push(`> ${command}`);
-                    projectLogs.set(id, logs);
+                    const logs = projectLogs.get(id) || []; logs.push(`> ${command}`); projectLogs.set(id, logs);
                     return res.writeHead(200).end(JSON.stringify({ message: "Sent" }));
                 }
-                return res.writeHead(400).end(JSON.stringify({ error: "Process not running" }));
+                return res.writeHead(400).end(JSON.stringify({ error: "Not running" }));
             }
 
             if (action === 'start' && req.method === 'POST') {
@@ -301,7 +313,7 @@ const server = http.createServer(async (req, res) => {
                 
                 if (project.start_command === 'STATIC') {
                     db.run(`UPDATE projects SET status = 'running' WHERE id = ?`, [id], () => {
-                        projectLogs.set(id, [`--- System: Static Site '${project.name}' is now live at /site/${project.name} ---`]);
+                        projectLogs.set(id, [`--- System: Static Site deployed at /site/${project.name} ---`]);
                         res.writeHead(200).end(JSON.stringify({ message: "Started", port: "STATIC" }));
                     });
                     return;
@@ -312,27 +324,23 @@ const server = http.createServer(async (req, res) => {
                 const requestedPort = project.port || 3001;
                 const actualPort = await getFreePort(requestedPort);
 
-                if (actualPort !== requestedPort) {
-                    db.run(`UPDATE projects SET port = ? WHERE id = ?`, [actualPort, id]);
-                }
+                if (actualPort !== requestedPort) db.run(`UPDATE projects SET port = ? WHERE id = ?`, [actualPort, id]);
 
-                projectLogs.set(id, [`--- System: Starting ${project.name} on port ${actualPort} ---`]);
+                projectLogs.set(id, [`--- System: Binding ${project.name} on port ${actualPort} ---`]);
                 const addLog = (text) => {
                     const logs = projectLogs.get(id) || [];
-                    logs.push(text);
-                    if (logs.length > 500) logs.shift();
+                    logs.push(text); if (logs.length > 500) logs.shift();
                     projectLogs.set(id, logs);
                 };
 
                 try {
                     const env = Object.assign({}, process.env, { PORT: actualPort });
                     const child = spawn(parts[0], parts.slice(1), { cwd: safePath, shell: true, env: env });
-
                     child.stdout.on('data', data => addLog(data.toString().trim()));
                     child.stderr.on('data', data => addLog(`[ERR] ${data.toString().trim()}`));
                     child.on('error', err => addLog(`[CRITICAL] ${err.message}`));
                     child.on('close', (code) => {
-                        addLog(`--- System: Process exited with code ${code} ---`);
+                        addLog(`--- System: Process exited (Code: ${code}) ---`);
                         runningProcesses.delete(id);
                         db.run(`UPDATE projects SET status = 'stopped' WHERE id = ?`, [id]);
                     });
@@ -351,22 +359,16 @@ const server = http.createServer(async (req, res) => {
                     if (process.platform === 'win32') exec(`taskkill /pid ${child.pid} /T /F`);
                     else child.kill('SIGINT');
                     runningProcesses.delete(id);
-                    db.run(`UPDATE projects SET status = 'stopped' WHERE id = ?`, [id], () => {
-                        res.writeHead(200).end(JSON.stringify({ message: "Stopped" }));
-                    });
+                    db.run(`UPDATE projects SET status = 'stopped' WHERE id = ?`, [id], () => res.writeHead(200).end(JSON.stringify({ message: "Stopped" })));
                 } else {
-                    db.run(`UPDATE projects SET status = 'stopped' WHERE id = ?`, [id], () => {
-                        res.writeHead(200).end(JSON.stringify({ message: "Cleaned up state" }));
-                    });
+                    db.run(`UPDATE projects SET status = 'stopped' WHERE id = ?`, [id], () => res.writeHead(200).end(JSON.stringify({ message: "Cleaned state" })));
                 }
                 return;
             }
-
         } catch (err) { return res.writeHead(401).end(JSON.stringify({ error: "Unauthorized" })); }
         return;
     }
 
-    // --- HOSTED STATIC SITES ROUTER ---
     if (pathname.startsWith('/site/')) {
         const pathParts = pathname.split('/');
         const projectName = pathParts[2];
@@ -378,7 +380,6 @@ const server = http.createServer(async (req, res) => {
             
             const safePath = project.path.replace(/\\/g, '/');
             let filePath = path.join(safePath, relativeFilePath);
-            
             let extname = path.extname(filePath);
             let contentType = 'text/html';
             switch (extname) {
@@ -389,7 +390,6 @@ const server = http.createServer(async (req, res) => {
                 case '.jpg': contentType = 'image/jpeg'; break;
                 case '.svg': contentType = 'image/svg+xml'; break;
             }
-
             fs.readFile(filePath, (err, content) => {
                 if (err) res.writeHead(404).end('404: File Not Found');
                 else res.writeHead(200, { 'Content-Type': contentType }).end(content, 'utf-8');
@@ -412,5 +412,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-    console.log(`🚀 R-Render Core running on http://localhost:${PORT}`);
+    console.log(`R-Render Core running on http://localhost:${PORT}`);
 });
