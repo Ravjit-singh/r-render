@@ -1,34 +1,74 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard | R-Render</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>R-Render Core</title>
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
-            darkMode: 'class',
             theme: {
                 extend: {
-                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    fontFamily: {
+                        sans: ['Geist', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+                        mono: ['Geist Mono', 'ui-monospace', 'monospace'],
+                    },
                     colors: {
-                        rBase: '#0a0a0a',
-                        rElevated: '#111111',
-                        rBorder: '#262626',
-                        rAccent: '#4640DE',
-                        rAccentHover: '#3b36bc'
+                        base: 'rgb(var(--c-base) / <alpha-value>)',
+                        surface: 'rgb(var(--c-surface) / <alpha-value>)',
+                        elevated: 'rgb(var(--c-elevated) / <alpha-value>)',
+                        borderline: 'rgb(var(--c-border) / <alpha-value>)',
+                        accent: 'rgb(var(--c-accent) / <alpha-value>)',
+                        accentInv: 'rgb(var(--c-accent-inv) / <alpha-value>)',
+                        muted: 'rgb(var(--c-muted) / <alpha-value>)'
+                    },
+                    boxShadow: {
+                        'elite': 'inset 0 1px 0 0 rgba(255, 255, 255, 0.05), inset 0 0 0 1px rgba(255, 255, 255, 0.02), 0 10px 40px -10px rgba(0,0,0,0.4)',
+                        'elite-hover': 'inset 0 1px 0 0 rgba(255, 255, 255, 0.1), inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 20px 40px -10px rgba(0,0,0,0.5)',
+                        'inner-input': 'inset 0 2px 4px 0 rgba(0, 0, 0, 0.2), inset 0 0 0 1px rgba(255, 255, 255, 0.05)',
+                        'float': '0 20px 40px -10px rgba(0,0,0,0.5), inset 0 1px 0 0 rgba(255,255,255,0.1)',
+                    },
+                    animation: {
+                        'slide-up': 'slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both',
+                        'fade-in': 'fadeIn 0.4s ease-out forwards',
+                    },
+                    keyframes: {
+                        slideUp: { '0%': { opacity: 0, transform: 'translateY(30px) scale(0.98)' }, '100%': { opacity: 1, transform: 'translateY(0) scale(1)' } },
+                        fadeIn: { '0%': { opacity: 0 }, '100%': { opacity: 1 } },
                     }
                 }
             }
         }
     </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap');
+        
+        :root {
+            --c-base: 0 0 0; --c-surface: 9 9 11; --c-elevated: 24 24 27; --c-border: 255 255 255;
+            --c-accent: 255 255 255; --c-accent-inv: 0 0 0; --c-muted: 161 161 170;
+        }
+
+        body { background-color: rgb(var(--c-base)); color: rgb(var(--c-accent)); -webkit-font-smoothing: antialiased; }
+        
+        .ambient-glow { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: radial-gradient(circle at 50% 0%, rgba(59,130,246,0.04) 0%, rgba(0,0,0,0) 60%); pointer-events: none; z-index: 0; }
+        
+        .glass-card { background: linear-gradient(180deg, rgb(var(--c-surface)), rgb(var(--c-base))); border-radius: 24px; box-shadow: var(--tw-shadow-elite); transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); position: relative; z-index: 10; border: 1px solid rgb(var(--c-border) / 0.1); }
+        .glass-card:hover { box-shadow: var(--tw-shadow-elite-hover); transform: translateY(-2px); border-color: rgb(var(--c-border) / 0.15); }
+
+        .input-elite { background: rgb(var(--c-base)); border: 1px solid transparent; box-shadow: var(--tw-shadow-inner-input); border-radius: 12px; color: rgb(var(--c-accent)); transition: all 0.2s ease; }
+        .input-elite:focus { background: rgb(var(--c-surface)); border-color: rgb(var(--c-accent) / 0.3); outline: none; box-shadow: var(--tw-shadow-inner-input), 0 0 0 3px rgb(var(--c-accent) / 0.05); }
+
+        .modal-overlay { opacity: 0; pointer-events: none; transition: opacity 0.3s ease; backdrop-filter: blur(5px); }
+        .modal-overlay.active { opacity: 1; pointer-events: auto; }
+        .modal-content { opacity: 0; transform: translateY(20px) scale(0.98); transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+        .modal-overlay.active .modal-content { opacity: 1; transform: translateY(0) scale(1); }
+    </style>
 </head>
-<body class="bg-rBase text-gray-200 font-sans antialiased min-h-screen flex flex-col">
-    <!-- The JS will inject everything inside this div -->
-    <div id="app" class="flex-grow flex flex-col"></div>
+<body class="flex flex-col min-h-screen selection:bg-accent selection:text-accentInv">
+    <div class="ambient-glow"></div>
+    <!-- SPA Mount Point -->
+    <div id="app" class="flex-grow flex flex-col relative z-10 w-full"></div>
     <script type="module" src="/js/main.js"></script>
 </body>
 </html>

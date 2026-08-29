@@ -1,30 +1,34 @@
 export function renderSettingsModal(user) {
     return `
-        <div id="settingsModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center z-50 opacity-0 transition-opacity duration-200">
-            <div class="bg-rElevated border border-rBorder w-full max-w-md rounded-xl shadow-2xl overflow-hidden transform scale-95 transition-transform duration-200" id="settingsModalContent">
+        <div id="settingsModal" class="fixed inset-0 bg-base/80 z-50 flex items-end md:items-center justify-center modal-overlay p-0 md:p-6 transition-all">
+            <div class="glass-card w-full h-[90vh] md:h-auto md:max-h-[90vh] md:max-w-[450px] flex flex-col modal-content rounded-t-[32px] md:rounded-[24px] bg-surface shadow-float" id="settingsModalContent">
                 
-                <div class="px-6 py-4 border-b border-rBorder flex justify-between items-center bg-rBase/50">
-                    <h2 class="text-lg font-medium text-gray-100">Account Settings</h2>
-                    <button id="closeSettingsBtn" class="text-gray-400 hover:text-gray-200 transition">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                <div class="w-full flex justify-center pt-4 pb-2 md:hidden shrink-0" id="mobileSettingsClose">
+                    <div class="w-12 h-1.5 bg-borderline/20 rounded-full"></div>
+                </div>
+
+                <div class="px-6 md:px-8 py-5 border-b border-borderline/10 flex justify-between items-center shrink-0">
+                    <h2 class="text-lg font-bold tracking-tight text-accent flex items-center gap-2">Core Preferences</h2>
+                    <button id="closeSettingsBtn" class="text-muted hover:text-accent p-1.5 rounded-full bg-elevated hover:bg-borderline/10 transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path></svg>
                     </button>
                 </div>
                 
-                <form id="settingsForm" class="p-6 space-y-5">
+                <form id="settingsForm" class="p-6 md:p-8 space-y-6 overflow-y-auto hide-scroll flex-grow">
                     <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-1.5">Username</label>
-                        <input type="text" id="updateUsername" value="${user.username}" required class="w-full bg-rBase border border-rBorder rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-rAccent focus:ring-1 focus:ring-rAccent transition">
+                        <label class="block text-[11px] font-bold text-muted mb-2 uppercase tracking-widest">Master Alias</label>
+                        <input type="text" id="updateUsername" value="${user.username || ''}" required class="w-full input-elite px-4 py-3.5 text-sm outline-none">
                     </div>
                     
                     <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-1.5">New Password</label>
-                        <input type="password" id="updatePassword" placeholder="Leave blank to keep current" class="w-full bg-rBase border border-rBorder rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-rAccent focus:ring-1 focus:ring-rAccent transition">
+                        <label class="block text-[11px] font-bold text-muted mb-2 uppercase tracking-widest">Cryptographic Key</label>
+                        <input type="password" id="updatePassword" placeholder="Leave blank to maintain current" class="w-full input-elite px-4 py-3.5 text-sm outline-none">
                     </div>
                     
-                    <div class="pt-4 flex justify-end space-x-3">
-                        <button type="button" id="cancelSettingsBtn" class="px-4 py-2 text-sm font-medium text-gray-400 hover:text-white transition">Cancel</button>
-                        <button type="submit" id="submitSettingsBtn" class="bg-rAccent hover:bg-rAccentHover text-white px-4 py-2 rounded-md text-sm font-medium transition shadow flex items-center">
-                            Save Changes
+                    <div class="pt-6 border-t border-borderline/10 flex justify-end space-x-3">
+                        <button type="button" id="cancelSettingsBtn" class="px-5 py-3 rounded-xl text-sm font-semibold text-muted bg-elevated hover:text-accent transition-colors border border-borderline/5">Abort</button>
+                        <button type="submit" id="submitSettingsBtn" class="px-6 py-3 bg-accent text-accentInv rounded-xl text-sm font-bold active:scale-[0.98] transition-transform shadow-[0_4px_14px_rgba(255,255,255,0.1)]">
+                            Synchronize
                         </button>
                     </div>
                 </form>
